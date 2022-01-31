@@ -14,9 +14,6 @@ import (
 	"github.com/miekg/pkcs11/p11"
 )
 
-const PIN = "3537363231383830"
-const PKCS11_LIB = "/usr/lib/pkcs11/opensc-pkcs11.so"
-
 //const tokenLabel = "Encryption Key"
 //const peerKeyPath = "../../certs/alice/alice_pub.pem"
 const peerKeyPath = "../../certs/nitro/hw_key.pub"
@@ -88,7 +85,7 @@ if err != nil {
 // try to open a session with the HSM, select the slot and login to it.
 // also try to find an x25519 key to derive with so we can fail early if
 // if the program can't derive
-func New(hsm_path string, requestedSlot uint, pin string) (*PKClient, error) {
+func NewHSM(hsm_path string, requestedSlot uint, pin string) (*PKClient, error) {
 	client := new(PKClient)
 
 	module, err := p11.OpenModule(hsm_path)
@@ -120,14 +117,14 @@ func New(hsm_path string, requestedSlot uint, pin string) (*PKClient, error) {
 	// make sure this device has a private curve25519 key for deriving
 	client.HSM_Session.PrivKeyObj, err = client.findDeriveKey(false)
 	if err != nil {
-		err = fmt.Errorf("failed to find a suitable key for deriving")
+		err = fmt.Errorf("failed to find the key for deriving: %w", err)
 		return nil, err
 	}
 	// lastly, make sure we can find the public key of the private key, so we can pass it to a requesting client
 	// TODO improve the interface to pkclient so we don't have to have such deep references
 	client.HSM_Session.PubKeyObj, err = client.findDeriveKey(true)
 	if err != nil {
-		err = fmt.Errorf("failed to find PublicKey for DeriveKey")
+		err = fmt.Errorf("failed to find public key for deriving")
 		return nil, err
 	}
 
@@ -337,7 +334,7 @@ func getRaw25519Key(srcKey *pem.Block) (*[]byte, error) {
 // : parameter IS_PUB_KEY sets the search pattern for either a public or private key
 func (dev *PKClient) findDeriveKey(IS_PUB_KEY bool) (key p11.Object, err error) {
 	keyAttrs := []*pkcs11.Attribute{
-		pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, pkcs11.CKK_EC),
+		//pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, pkcs11.CKK_EC),
 		pkcs11.NewAttribute(pkcs11.CKA_DERIVE, true),
 		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PRIVATE_KEY),
 	}
@@ -345,7 +342,7 @@ func (dev *PKClient) findDeriveKey(IS_PUB_KEY bool) (key p11.Object, err error) 
 	if IS_PUB_KEY {
 		// prebuilt private key attributes for finding the x25519 key on the HSM
 		keyAttrs = []*pkcs11.Attribute{
-			pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, pkcs11.CKK_EC),
+			//	pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, pkcs11.CKK_EC),
 			pkcs11.NewAttribute(pkcs11.CKA_DERIVE, true),
 			pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PUBLIC_KEY),
 		}
@@ -372,7 +369,7 @@ func (dev *PKClient) findDeriveKey(IS_PUB_KEY bool) (key p11.Object, err error) 
 	return nil
 }
 */
-
+/*
 func getMechList(slots []p11.Slot) {
 
 	mechlist, err := slots[0].Mechanisms()
@@ -386,7 +383,7 @@ func getMechList(slots []p11.Slot) {
 
 		}
 	}
-}
+} */
 
 func wgKeyToPem(pubKey *[]byte, IS_PUB_KEY bool) ([]byte, error) {
 	buf, err := hex.DecodeString(PEM_PUB_HEADER)
