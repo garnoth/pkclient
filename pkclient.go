@@ -35,7 +35,7 @@ const (
 	NoisePublicKeySize  = 32
 )
 
-type pkclient struct {
+type PKClient struct {
 	HSM_Session struct {
 		slot       uint        // slot to use on the HSM
 		pin        string      // device PIN number
@@ -88,8 +88,8 @@ if err != nil {
 // try to open a session with the HSM, select the slot and login to it.
 // also try to find an x25519 key to derive with so we can fail early if
 // if the program can't derive
-func New(hsm_path string, requestedSlot uint, pin string) (*pkclient, error) {
-	client := new(pkclient)
+func New(hsm_path string, requestedSlot uint, pin string) (*PKClient, error) {
+	client := new(PKClient)
 
 	module, err := p11.OpenModule(hsm_path)
 	if err != nil {
@@ -117,17 +117,17 @@ func New(hsm_path string, requestedSlot uint, pin string) (*pkclient, error) {
 	}
 	//login successful
 	client.HSM_Session.pin = pin
-
 	// make sure this device has a private curve25519 key for deriving
 	client.HSM_Session.PrivKeyObj, err = client.findDeriveKey(false)
 	if err != nil {
+		err = fmt.Errorf("failed to find a suitable key for deriving")
 		return nil, err
 	}
-
 	// lastly, make sure we can find the public key of the private key, so we can pass it to a requesting client
 	// TODO improve the interface to pkclient so we don't have to have such deep references
 	client.HSM_Session.PubKeyObj, err = client.findDeriveKey(true)
 	if err != nil {
+		err = fmt.Errorf("failed to find PublicKey for DeriveKey")
 		return nil, err
 	}
 
@@ -136,11 +136,21 @@ func New(hsm_path string, requestedSlot uint, pin string) (*pkclient, error) {
 
 // helper function that will try to return
 // and return the raw bytes for use by consumers which use raw keys, like WireGard
-func (client *pkclient) PublicKey() ([]byte, error) {
+func (client *PKClient) PublicKey() ([]byte, error) {
 	key, err := client.HSM_Session.PubKeyObj.Value()
 	if err != nil {
 		return nil, err
 	}
+	return key, nil
+}
+
+// helper function that will try to return exactly 32 bytes of a raw key
+func (client *PKClient) PublicKeyNoise() (key [NoisePublicKeySize]byte, err error) {
+	src, err := client.HSM_Session.PubKeyObj.Value()
+	if err != nil {
+		return key, err
+	}
+	copy(key[:], src[:NoisePublicKeySize])
 	return key, nil
 }
 
@@ -159,8 +169,44 @@ func PublicKeyFromFile(pemFilePath string) (key []byte, err error) {
 	return key, nil
 }
 
+// TODO clean this up and reduce code reuse from Derive
+func (client *PKClient) DeriveNoise(peerPubKey [NoisePublicKeySize]byte) (secret [NoisePrivateKeySize]byte, err error) {
+
+	var mech_mech uint = pkcs11.CKM_ECDH1_DERIVE
+
+	// before you call derive, you need to have an array of attributes which specify the type of
+	// key you return, in our case, it's the secret key produced via deriving
+	// pulled template from OpenSC pkcs11-tool.c line 4038
+	attrTemplate := []*pkcs11.Attribute{
+		pkcs11.NewAttribute(pkcs11.CKA_TOKEN, false),
+		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_SECRET_KEY),
+		pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, pkcs11.CKK_GENERIC_SECRET),
+		pkcs11.NewAttribute(pkcs11.CKA_SENSITIVE, false),
+		pkcs11.NewAttribute(pkcs11.CKA_EXTRACTABLE, true),
+		pkcs11.NewAttribute(pkcs11.CKA_ENCRYPT, true),
+		pkcs11.NewAttribute(pkcs11.CKA_DECRYPT, true),
+		pkcs11.NewAttribute(pkcs11.CKA_WRAP, true),
+		pkcs11.NewAttribute(pkcs11.CKA_UNWRAP, true),
+	}
+
+	// setup the parameters which include the peer's public keey
+	ecdhParams := pkcs11.NewECDH1DeriveParams(pkcs11.CKD_NULL, nil, peerPubKey[:NoisePublicKeySize])
+
+	var mech *pkcs11.Mechanism = pkcs11.NewMechanism(mech_mech, ecdhParams)
+
+	// derive the secret key from the public key as input and the private key on the device
+	tmpKey, err := p11.PrivateKey(client.HSM_Session.PrivKeyObj).Derive(*mech, attrTemplate)
+	if err != nil {
+		fmt.Println("Error deriving key")
+		return secret, err
+	}
+
+	copy(secret[:], tmpKey[:NoisePrivateKeySize])
+	return secret, err
+}
+
 // derives a secret key on a private key with the peerPubKey parameter
-func (client *pkclient) Derive(peerPubKey []byte) ([]byte, error) {
+func (client *PKClient) Derive(peerPubKey []byte) ([]byte, error) {
 	var mech_mech uint = pkcs11.CKM_ECDH1_DERIVE
 
 	// before you call derive, you need to have an array of attributes which specify the type of
@@ -289,7 +335,7 @@ func getRaw25519Key(srcKey *pem.Block) (*[]byte, error) {
 
 // Attempts to return deriveKey, either the public or private version
 // : parameter IS_PUB_KEY sets the search pattern for either a public or private key
-func (dev *pkclient) findDeriveKey(IS_PUB_KEY bool) (key p11.Object, err error) {
+func (dev *PKClient) findDeriveKey(IS_PUB_KEY bool) (key p11.Object, err error) {
 	keyAttrs := []*pkcs11.Attribute{
 		pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, pkcs11.CKK_EC),
 		pkcs11.NewAttribute(pkcs11.CKA_DERIVE, true),
