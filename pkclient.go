@@ -14,18 +14,10 @@ import (
 	"github.com/miekg/pkcs11/p11"
 )
 
-//const tokenLabel = "Encryption Key"
-//const peerKeyPath = "../../certs/alice/alice_pub.pem"
-const peerKeyPath = "../../certs/nitro/hw_key.pub"
-const peerKeyWGOutPath = "../../certs/nitro/hw_key.wg"
-const peerKeyWGPath = "../../certs/alice/test_wg_pub.pem"
-const peerPrivKeyWGPath = "../../certs/alice/test_wg_priv.pem"
-const peerRawWGKey = "../../certs/test_client/publickey"
-const outputPath = "goSecret.bin"
-
 const (
 	PEM_PUB_HEADER      = "302a300506032b656e032100"
 	PEM_PRIV_HEADER     = "302e020100300506032b656e04220420"
+	PUB_KEY_STUB        = "bc4040d0a46f0dc74e660fda6aa9f1960618300ec9ea487bb1a59240fa2b9418"
 	PEM_PUB_KEY_SIZE    = 44
 	PEM_PRIV_KEY_SIZE   = 48
 	NoisePrivateKeySize = 32
@@ -134,16 +126,46 @@ func NewHSM(hsm_path string, requestedSlot uint, pin string) (*PKClient, error) 
 // helper function that will try to return
 // and return the raw bytes for use by consumers which use raw keys, like WireGard
 func (client *PKClient) PublicKey() ([]byte, error) {
-	key, err := client.HSM_Session.PubKeyObj.Value()
-	if err != nil {
-		return nil, err
-	}
+	key, _ := hex.DecodeString(PUB_KEY_STUB)
 	return key, nil
+
+	/* 	key, err := client.HSM_Session.PubKeyObj.Value()
+	   	if err != nil {
+	   		return nil, err
+	   	}
+	   	return key, nil */
+}
+
+// helper function that will try to return
+// and return the raw bytes for use by consumers which use raw keys, like WireGard
+func (client *PKClient) PublicKeyB64() string {
+	key, _ := hex.DecodeString(PUB_KEY_STUB)
+	ss := base64.StdEncoding.EncodeToString(key)
+	return ss
+	/* 	key, err := client.HSM_Session.PubKeyObj.Value()
+	   	if err != nil {
+	   		return "Error getting public key from hsm"
+	   	}
+	   	fmt.Printf("Raw PublicKey: %X\n", key)
+	   	ss := base64.StdEncoding.EncodeToString(key)
+	   	fmt.Printf("b64 PublicKey: %X\n", ss)
+
+	   	f, err := os.OpenFile("output.log",
+	   		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	   	if err != nil {
+	   		log.Println(err)
+	   	}
+	   	defer f.Close()
+	   	if _, err := f.WriteString(ss); err != nil {
+	   		log.Println(err)
+	   	}
+	   	return ss */
 }
 
 // helper function that will try to return exactly 32 bytes of a raw key
 func (client *PKClient) PublicKeyNoise() (key [NoisePublicKeySize]byte, err error) {
 	src, err := client.HSM_Session.PubKeyObj.Value()
+
 	if err != nil {
 		return key, err
 	}
@@ -158,10 +180,12 @@ func PublicKeyFromFile(pemFilePath string) (key []byte, err error) {
 	if err != nil {
 		return nil, err
 	}
+	fmt.Println("loaded key1")
 	rawKey, err := getRaw25519Key(pemFile)
 	if err != nil {
 		return nil, err
 	}
+	fmt.Println("loaded key2")
 	copy(key, *rawKey)
 	return key, nil
 }
@@ -320,7 +344,7 @@ func writeToFile(path string, data []byte) error {
 // It seems to return the last 32 bytes of the 'key' when comparing
 // the hex output from the 44 bytes that we get from rawKey
 func getRaw25519Key(srcKey *pem.Block) (*[]byte, error) {
-	if len(srcKey.Bytes) != 44 {
+	if srcKey != nil || len(srcKey.Bytes) != 44 {
 		err := errors.New("unexpected key length! check key type or path")
 		return nil, err
 	}
@@ -395,8 +419,8 @@ func wgKeyToPem(pubKey *[]byte, IS_PUB_KEY bool) ([]byte, error) {
 		pemKey := make([]byte, PEM_PUB_KEY_SIZE)
 		copy(pemKey[:11], buf)
 		copy(pemKey[12:], *pubKey)
-
 		return pemKey, nil
+
 	} else { // private key
 		pemKey := make([]byte, PEM_PRIV_KEY_SIZE)
 		copy(pemKey[:15], buf)
