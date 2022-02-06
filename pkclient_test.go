@@ -10,7 +10,7 @@ const PKCS11_LIB = "/usr/lib/pkcs11/opensc-pkcs11.so"
 const SLOT = 0
 
 func TestPKClient(t *testing.T) {
-	client, err := NewHSM(PKCS11_LIB, SLOT, PIN)
+	client, err := New(PKCS11_LIB, SLOT, PIN)
 	if err != nil {
 		t.Errorf("Error loading module: %w\n", err)
 		return
@@ -40,6 +40,41 @@ func TestPKClient(t *testing.T) {
 	fmt.Printf("secret: %v\n", buf)
 
 }
+
+/* func TestPKClientUserPin(t *testing.T) {
+	var stdin bytes.Buffer
+
+	client, err := New_AskPin(PKCS11_LIB, SLOT)
+	stdin.Write([]byte(PIN + "\n"))
+	if err != nil {
+		t.Errorf("Error loading module: %w\n", err)
+		return
+	}
+	fmt.Println("Successfully entered pin")
+	fmt.Printf("client: %v\n", *client)
+	key, err := client.PublicKeyNoise()
+	if err != nil {
+		t.Errorf("Error getting public key: %w\n", err)
+		return
+	}
+	bkey := client.PublicKeyB64()
+	if err != nil {
+		t.Errorf("Error getting public key: %w\n", err)
+		return
+	}
+	fmt.Printf("public bKey: %v\n", bkey)
+
+	var buf [32]byte
+	copy(buf[:], key[:32])
+	buf, err = client.DeriveNoise(buf)
+	if err != nil {
+		t.Errorf("Error performing derive: %w\n", err)
+		return
+	}
+	fmt.Printf("public key: %v\n", key)
+	fmt.Printf("secret: %v\n", buf)
+
+} */
 
 // loads a raw WG key and converts it to a PEM file and write it out
 /* func TestFileLoad(t *testing.T) {
