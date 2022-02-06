@@ -1,7 +1,6 @@
 package pkclient
 
 import (
-	"encoding/base64"
 	"fmt"
 	"testing"
 )
@@ -9,17 +8,6 @@ import (
 const PIN = "3537363231383830"
 const PKCS11_LIB = "/usr/lib/pkcs11/opensc-pkcs11.so"
 const SLOT = 0
-
-//const tokenLabel = "Encryption Key"
-//const peerKeyPath = "../../certs/alice/alice_pub.pem"
-const peerKeyPath = "../certs/nitro/hw_key.pub"
-const peerKeyWGOutPath = "../certs/nitro/hw_key.wg"
-const peerKeyWGPath = "../certs/alice/test_wg_pub.pem"
-const peerPrivKeyWGPath = "../certs/alice/test_wg_priv.pem"
-const peerRawWGKey = "../certs/test_client/publickey"
-const outputPath = "goSecret.bin"
-const knownGoodPEMKey = "../certs/hw_key/publickey.pem"
-const convertedPEMKey = "../certs/hw_key/publickey_convt.pem"
 
 func TestPKClient(t *testing.T) {
 	client, err := NewHSM(PKCS11_LIB, SLOT, PIN)
@@ -54,7 +42,7 @@ func TestPKClient(t *testing.T) {
 }
 
 // loads a raw WG key and converts it to a PEM file and write it out
-func TestFileLoad(t *testing.T) {
+/* func TestFileLoad(t *testing.T) {
 	rawWGPK, err := loadRawKey(peerRawWGKey)
 	if err != nil {
 		t.Errorf("Error loading Raw HW key: %w\n", err)
@@ -77,7 +65,7 @@ func TestFileLoad(t *testing.T) {
 	encodedByte := []byte(encodedStr)
 	writeKeyToPemFile(peerKeyWGPath, encodedByte, true)
 
-}
+} */
 
 /*
 func TestLoadPemKeyFileLoad(t *testing.T) {
