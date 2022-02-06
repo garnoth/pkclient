@@ -17,11 +17,12 @@ import (
 const (
 	PEM_PUB_HEADER      = "302a300506032b656e032100"
 	PEM_PRIV_HEADER     = "302e020100300506032b656e04220420"
-	PUB_KEY_STUB        = "bc4040d0a46f0dc74e660fda6aa9f1960618300ec9ea487bb1a59240fa2b9418"
+	CURVE25519_OID_RAW  = "06032B656E"
 	PEM_PUB_KEY_SIZE    = 44
 	PEM_PRIV_KEY_SIZE   = 48
 	NoisePrivateKeySize = 32
 	NoisePublicKeySize  = 32
+	ERROR_PUBKEY_HSM    = "error getting public key from hsm"
 )
 
 type PKClient struct {
@@ -37,47 +38,12 @@ type PKClient struct {
 	}
 }
 
-/* 	// load a pem key into a pem ptr
-peerKeyPtr := loadPemKeyFile(peerKeyPath)
-// get the raw key version from the pem ptr
-rawKeyPtr, err := getRaw25519Key(peerKeyPtr)
-if err != nil {
-	fmt.Println(err)
-	os.Exit(1)
-}
-
-// write a raw x25519 key to file in WG format
-writePemToRawKey(peerKeyWGOutPath, rawKeyPtr)
-// load a wireguard public key
-rawWGPK, err := loadRawKey(peerRawWGKey)
-//fmt.Printf("Raw WG KEY: %X\n", rawWGPK)
-if err != nil {
-	fmt.Println(err)
-	os.Exit(1)
-}|
-*/
-
-//convert the (rawkey back to PEM for learning
-/* 	convertedPemKey, err := wgKeyToPem(rawKeyPtr, true)
-   	if err != nil {
-   		fmt.Println(err)
-   		os.Exit(1)
-   	} */
-
-//fmt.Printf("converted key: %X\n", convertedPemKey)
-
-/* 	encodedStr := base64.StdEncoding.EncodeToString(convertedPemKey)
-   	fmt.Println("base64 encoded string:")
-   	fmt.Println(encodedStr)
-   	encodedByte := []byte(encodedStr) */
-//writeKeyToPemFile(peerKeyWGPath, encodedByte, true)
-
 // right now we don't support user input pins
 // TODO add ability to have user enter their pin so we don't save it
 // try to open a session with the HSM, select the slot and login to it.
 // also try to find an x25519 key to derive with so we can fail early if
 // if the program can't derive
-func NewHSM(hsm_path string, requestedSlot uint, pin string) (*PKClient, error) {
+func NewHSM(hsm_path string, userDefSlot uint, pin string) (*PKClient, error) {
 	client := new(PKClient)
 
 	module, err := p11.OpenModule(hsm_path)
@@ -91,17 +57,16 @@ func NewHSM(hsm_path string, requestedSlot uint, pin string) (*PKClient, error) 
 		return nil, err
 	}
 	// try to open a session on the slot
-	client.HSM_Session.session, err = slots[requestedSlot].OpenWriteSession()
+	client.HSM_Session.session, err = slots[userDefSlot].OpenWriteSession()
 	if err != nil {
-		err := fmt.Errorf("failed to open session on slot %d", requestedSlot)
+		err := fmt.Errorf("failed to open session on slot %d", userDefSlot)
 		return nil, err
 	}
-	client.HSM_Session.slot = requestedSlot // we don't need to save this but maybe we could use it in the future?
-	//client.HSM_Session.session = session
+	client.HSM_Session.slot = userDefSlot
 	// login to the slot
 	err = client.HSM_Session.session.Login(pin)
 	if err != nil {
-		//fmt.Println("login error, bad pin?", err)
+		fmt.Println("login error, bad pin?", err)
 		return nil, err
 	}
 	//login successful
@@ -112,8 +77,8 @@ func NewHSM(hsm_path string, requestedSlot uint, pin string) (*PKClient, error) 
 		err = fmt.Errorf("failed to find the key for deriving: %w", err)
 		return nil, err
 	}
-	// lastly, make sure we can find the public key of the private key, so we can pass it to a requesting client
-	// TODO improve the interface to pkclient so we don't have to have such deep references
+
+	// find the public key of the private key, so we can pass it to a requesting client
 	client.HSM_Session.PubKeyObj, err = client.findDeriveKey(true)
 	if err != nil {
 		err = fmt.Errorf("failed to find public key for deriving")
@@ -123,69 +88,56 @@ func NewHSM(hsm_path string, requestedSlot uint, pin string) (*PKClient, error) 
 	return client, nil
 }
 
-// helper function that will try to return
-// and return the raw bytes for use by consumers which use raw keys, like WireGard
-func (client *PKClient) PublicKey() ([]byte, error) {
-	key, _ := hex.DecodeString(PUB_KEY_STUB)
-	return key, nil
-
-	/* 	key, err := client.HSM_Session.PubKeyObj.Value()
-	   	if err != nil {
-	   		return nil, err
-	   	}
-	   	return key, nil */
-}
-
-// helper function that will try to return
-// and return the raw bytes for use by consumers which use raw keys, like WireGard
-func (client *PKClient) PublicKeyB64() string {
-	key, _ := hex.DecodeString(PUB_KEY_STUB)
-	ss := base64.StdEncoding.EncodeToString(key)
-	return ss
-	/* 	key, err := client.HSM_Session.PubKeyObj.Value()
-	   	if err != nil {
-	   		return "Error getting public key from hsm"
-	   	}
-	   	fmt.Printf("Raw PublicKey: %X\n", key)
-	   	ss := base64.StdEncoding.EncodeToString(key)
-	   	fmt.Printf("b64 PublicKey: %X\n", ss)
-
-	   	f, err := os.OpenFile("output.log",
-	   		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	   	if err != nil {
-	   		log.Println(err)
-	   	}
-	   	defer f.Close()
-	   	if _, err := f.WriteString(ss); err != nil {
-	   		log.Println(err)
-	   	}
-	   	return ss */
-}
-
-// helper function that will try to return exactly 32 bytes of a raw key
-func (client *PKClient) PublicKeyNoise() (key [NoisePublicKeySize]byte, err error) {
-	src, err := client.HSM_Session.PubKeyObj.Value()
-
+// return the public key for the derive key that have previously found
+// this will return whole raw value, it's up the caller to check the length
+// this will likely be the full EC_POINT. See PublicKeyNoise()
+func (client *PKClient) PublicKeyRaw() ([]byte, error) {
+	key, err := client.HSM_Session.PubKeyObj.Value()
 	if err != nil {
 		return key, err
 	}
-	copy(key[:], src[:NoisePublicKeySize])
 	return key, nil
 }
 
-// helper function that will import a PEM formatted curve25519 public key
-// and return the raw bytes for use by consumers which use raw keys, like WireGard
-func PublicKeyFromFile(pemFilePath string) (key []byte, err error) {
-	pemFile, err := loadPemKeyFile(pemFilePath)
+// Returns a 32 byte length key which we attempt to get and convert correctly from the hsm
+func (client *PKClient) PublicKeyNoise() (key [NoisePublicKeySize]byte, err error) {
+	srcKey, err := client.HSM_Session.PubKeyObj.Value()
+
+	if err != nil || len(srcKey) < NoisePublicKeySize {
+		var zkey [NoisePublicKeySize]byte // temp garbage key so we can return the error
+		return zkey, err
+	}
+	// On a Nitrokey Start, this gets the full EC_POINT value of 34 bytes instead of 32,
+	// so if it's > 32 bytes, just return the last 32 bytes.
+	if len(srcKey) > NoisePublicKeySize {
+		srcKey = srcKey[len(srcKey)-NoisePublicKeySize:]
+	}
+
+	copy(key[:], srcKey[:])
+	return key, nil
+}
+
+// Returns a base64 encoded public key
+func (client *PKClient) PublicKeyB64() string {
+	srcKey, err := client.PublicKeyNoise()
+	if err != nil {
+		return ERROR_PUBKEY_HSM
+	}
+	return base64.StdEncoding.EncodeToString(srcKey[:])
+}
+
+// Import a PEM formatted curve25519 public key from filePath
+// return the raw bytes for use by callers which use raw keys
+func LoadPublicKeyFromFile(filePath string) (key []byte, err error) {
+	pemFile, err := loadPemKeyFile(filePath)
 	if err != nil {
 		return nil, err
 	}
-	fmt.Println("loaded key1")
+
 	rawKey, err := getRaw25519Key(pemFile)
 	if err != nil {
 		return nil, err
 	}
-	fmt.Println("loaded key2")
 	copy(key, *rawKey)
 	return key, nil
 }
@@ -196,7 +148,7 @@ func (client *PKClient) DeriveNoise(peerPubKey [NoisePublicKeySize]byte) (secret
 	var mech_mech uint = pkcs11.CKM_ECDH1_DERIVE
 
 	// before you call derive, you need to have an array of attributes which specify the type of
-	// key you return, in our case, it's the secret key produced via deriving
+	// key to be returned, in our case, it's the shared secret key, produced via deriving
 	// pulled template from OpenSC pkcs11-tool.c line 4038
 	attrTemplate := []*pkcs11.Attribute{
 		pkcs11.NewAttribute(pkcs11.CKA_TOKEN, false),
@@ -259,6 +211,79 @@ func (client *PKClient) Derive(peerPubKey []byte) ([]byte, error) {
 	return secret, nil
 }
 
+// skip ASN.1 parsing and just get the last 32 bytes of the key
+func getRaw25519Key(srcKey *pem.Block) (*[]byte, error) {
+	if srcKey != nil || len(srcKey.Bytes) != 44 {
+		err := errors.New("unexpected key length! check key type or path")
+		return nil, err
+	}
+	newKey := make([]byte, NoisePrivateKeySize)
+	// 44 - 32 = 12
+	copy(newKey, srcKey.Bytes[12:])
+	return &newKey, nil
+}
+
+// Try to find a suitable key on the hsm for x25519 key derivation
+// parameter GET_PUB_KEY sets the search pattern for a public or private key
+func (dev *PKClient) findDeriveKey(GET_PUB_KEY bool) (key p11.Object, err error) {
+	//  EC_PARAMS value: the specifc OID for x25519 operation
+	rawOID, _ := hex.DecodeString(CURVE25519_OID_RAW)
+
+	keyAttrs := []*pkcs11.Attribute{
+		pkcs11.NewAttribute(pkcs11.CKA_EC_PARAMS, rawOID),
+		pkcs11.NewAttribute(pkcs11.CKA_DERIVE, true),
+	}
+	var keyType *pkcs11.Attribute
+	if GET_PUB_KEY {
+		keyType = pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PUBLIC_KEY)
+	} else {
+		keyType = pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PRIVATE_KEY)
+	}
+	keyAttrs = append(keyAttrs, keyType)
+
+	key, err = dev.HSM_Session.session.FindObject(keyAttrs)
+	if err != nil {
+		return key, err
+	}
+	return key, nil
+}
+
+// Takes a raw wireguard pubkey and writes it to a PEM formatted file
+// Probably not needed or very useful
+func wgKeyToPem(pubKey *[]byte, IS_PUB_KEY bool) ([]byte, error) {
+	buf, err := hex.DecodeString(PEM_PUB_HEADER)
+	if err != nil {
+		return nil, err
+	}
+	if IS_PUB_KEY {
+		pemKey := make([]byte, PEM_PUB_KEY_SIZE)
+		copy(pemKey[:11], buf)
+		copy(pemKey[12:], *pubKey)
+		return pemKey, nil
+
+	} else { // private key
+		pemKey := make([]byte, PEM_PRIV_KEY_SIZE)
+		copy(pemKey[:15], buf)
+		copy(pemKey[16:], *pubKey)
+		return pemKey, nil
+	}
+}
+
+// Some unused helper functions that may be handly later
+// TODO move some of these to a utility helper function
+
+//convert and write a PEM x25519 key to the 'WG format' (shorter, no header)
+func writePemToRawKey(writePath string, key *[]byte) error {
+	ss := base64.StdEncoding.EncodeToString(*key)
+	ss += "\n"
+	err := writeToFile(writePath, []byte(ss))
+	if err != nil {
+		return err
+	}
+	return nil
+
+}
+
 // loads a key file into a PEM ptr from the given path
 func loadPemKeyFile(path string) (pemKey *pem.Block, err error) {
 	keyFile, err := os.Open(path)
@@ -278,7 +303,7 @@ func loadPemKeyFile(path string) (pemKey *pem.Block, err error) {
 	return pemKey, err
 }
 
-//Loads a 'raw' base64 encoded key
+// Loads a 'raw' base64 encoded key
 func loadRawKey(path string) ([]byte, error) {
 	rawKeyB64, err := ioutil.ReadFile(path)
 	str := string(rawKeyB64)
@@ -289,18 +314,6 @@ func loadRawKey(path string) ([]byte, error) {
 		return nil, err
 	}
 	return rawKey, nil
-
-}
-
-//convert and write a PEM x25519 key to the 'WG format' (shorter, no header)
-func writePemToRawKey(writePath string, key *[]byte) error {
-	ss := base64.StdEncoding.EncodeToString(*key)
-	ss += "\n"
-	err := writeToFile(writePath, []byte(ss))
-	if err != nil {
-		return err
-	}
-	return nil
 
 }
 
@@ -337,94 +350,4 @@ func writeToFile(path string, data []byte) error {
 		return err
 	}
 	return nil
-}
-
-// There must be a function somewhere that already does this.
-// from my debugging of EVP_PKEY_get_raw_public_key:
-// It seems to return the last 32 bytes of the 'key' when comparing
-// the hex output from the 44 bytes that we get from rawKey
-func getRaw25519Key(srcKey *pem.Block) (*[]byte, error) {
-	if srcKey != nil || len(srcKey.Bytes) != 44 {
-		err := errors.New("unexpected key length! check key type or path")
-		return nil, err
-	}
-	newKey := make([]byte, NoisePrivateKeySize)
-	// 44 - 32 = 12
-	copy(newKey, srcKey.Bytes[12:])
-	return &newKey, nil
-}
-
-// Attempts to return deriveKey, either the public or private version
-// : parameter IS_PUB_KEY sets the search pattern for either a public or private key
-func (dev *PKClient) findDeriveKey(IS_PUB_KEY bool) (key p11.Object, err error) {
-	keyAttrs := []*pkcs11.Attribute{
-		//pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, pkcs11.CKK_EC),
-		pkcs11.NewAttribute(pkcs11.CKA_DERIVE, true),
-		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PRIVATE_KEY),
-	}
-
-	if IS_PUB_KEY {
-		// prebuilt private key attributes for finding the x25519 key on the HSM
-		keyAttrs = []*pkcs11.Attribute{
-			//	pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, pkcs11.CKK_EC),
-			pkcs11.NewAttribute(pkcs11.CKA_DERIVE, true),
-			pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PUBLIC_KEY),
-		}
-	}
-
-	key, err = dev.HSM_Session.session.FindObject(keyAttrs)
-	if err != nil {
-		return key, err
-	}
-	return key, nil
-}
-
-/* func saveThisForLater() {
-	ss := base64.StdEncoding.EncodeToString(secret)
-	fmt.Printf("Success! Derived secret: \n%s\n", ss)
-
-	err = writeToFile(outputPath, secret)
-	if err != nil {
-		fmt.Printf("Error writing to file: %s\n", err)
-	}
- 	label, _ := privateKeyObject.Label()
-	   	fmt.Printf("Label:%s\n", label)
-	   	fmt.Printf("Found private key! %s\n", privateKeyObject)
-	return nil
-}
-*/
-/*
-func getMechList(slots []p11.Slot) {
-
-	mechlist, err := slots[0].Mechanisms()
-	if err == nil {
-		for i := range mechlist {
-			mechInfo, err := mechlist[i].Info()
-			if err == nil {
-				fmt.Printf("mechs: ", mechInfo)
-				println()
-			}
-
-		}
-	}
-} */
-
-func wgKeyToPem(pubKey *[]byte, IS_PUB_KEY bool) ([]byte, error) {
-	buf, err := hex.DecodeString(PEM_PUB_HEADER)
-	if err != nil {
-		return nil, err
-	}
-	//var pemKey *[]byte
-	if IS_PUB_KEY {
-		pemKey := make([]byte, PEM_PUB_KEY_SIZE)
-		copy(pemKey[:11], buf)
-		copy(pemKey[12:], *pubKey)
-		return pemKey, nil
-
-	} else { // private key
-		pemKey := make([]byte, PEM_PRIV_KEY_SIZE)
-		copy(pemKey[:15], buf)
-		copy(pemKey[16:], *pubKey)
-		return pemKey, nil
-	}
 }

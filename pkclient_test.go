@@ -29,7 +29,7 @@ func TestPKClient(t *testing.T) {
 	}
 	fmt.Println("Success!")
 	fmt.Printf("client: %v\n", *client)
-	key, err := client.PublicKey()
+	key, err := client.PublicKeyNoise()
 	if err != nil {
 		t.Errorf("Error getting public key: %w\n", err)
 		return
