@@ -4,9 +4,11 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"strings"
 
 	"github.com/miekg/pkcs11"
 	"github.com/miekg/pkcs11/p11"
+	"golang.org/x/term"
 )
 
 const (
@@ -19,13 +21,12 @@ const (
 type PKClient struct {
 	HSM_Session struct {
 		slot       uint        // slot to use on the HSM
-		pin        string      // device PIN number
 		key_label  string      // label of derivation key. Unused
 		key_id     uint        // ID of the key on the device
 		session    p11.Session // session object
-		pubKey     [NoisePublicKeySize]byte
-		privKeyObj p11.Object // the private key handle key on the hsm
-		pubKeyObj  p11.Object // the public key handle on the hsm
+		loggedIn   bool        // to track the session login status
+		privKeyObj p11.Object  // the private key handle key on the hsm
+		pubKeyObj  p11.Object  // the public key handle on the hsm
 		module     p11.Module
 	}
 }
@@ -37,7 +38,6 @@ type PKClient struct {
 //
 func New(hsmPath string, slot uint, pin string) (*PKClient, error) {
 	client := new(PKClient)
-
 	module, err := p11.OpenModule(hsmPath)
 	if err != nil {
 		err := fmt.Errorf("failed to load module library: %s", hsmPath)
@@ -59,33 +59,30 @@ func New(hsmPath string, slot uint, pin string) (*PKClient, error) {
 
 	// try to login to the slot
 
-	if pin == "-1" { // ask for pin
+	if pin == "ask" {
 		retries := 0
-		for retries < 3 {
-			fmt.Printf("Please enter pin for slot %d:\n", slot)
-			fmt.Scanf("%s", &pin)
+		for retries < 2 {
+			fmt.Printf("Enter Pin for slot %d:\n", slot)
+			userPin, _ := term.ReadPassword(0) // no echo
+			pin := strings.TrimSpace(string(userPin))
 			err = client.HSM_Session.session.Login(pin)
 			if err != nil {
-				fmt.Printf("Bad Pin or slot %d:\n", slot)
+				fmt.Println("Login unsuccessful")
 			} else {
-				pin = "-1" // user doesn't want the pin saved
+				pin = "-1" // don't save the pin
 				break
 			}
 			retries++
 		}
-
 	} else {
 		err = client.HSM_Session.session.Login(pin)
+		if err != nil {
+			err = fmt.Errorf("unable to login. error: %w", err)
+			return nil, err
+		}
 	}
-
-	if err != nil {
-		fmt.Println("unable to login. error: %w ", err)
-		return nil, err
-	}
-
+	client.HSM_Session.loggedIn = true
 	// login successful
-	// TODO will we ever need to save the pin and login again?
-	client.HSM_Session.pin = pin
 
 	// make sure the hsm has a private curve25519 key for deriving
 	client.HSM_Session.privKeyObj, err = client.findDeriveKey(false)
@@ -93,21 +90,19 @@ func New(hsmPath string, slot uint, pin string) (*PKClient, error) {
 		err = fmt.Errorf("failed to find private key for deriving: %w", err)
 		return nil, err
 	}
-
 	// find the public key of the private key, so we can pass it to the caller later
 	client.HSM_Session.pubKeyObj, err = client.findDeriveKey(true)
 	if err != nil {
-		err = fmt.Errorf("failed to find public key for deriving")
+		err = fmt.Errorf("failed to find public key for deriving %w", err)
 		return nil, err
 	}
-
 	return client, nil
 }
 
 // alternate constructor that will not save the hsm pin and prompt
-// on the command line for the pin
+// the user for the pin number
 func New_AskPin(hsmPath string, slot uint) (*PKClient, error) {
-	client, err := New(hsmPath, slot, "-1")
+	client, err := New(hsmPath, slot, "ask")
 	if err != nil {
 		return nil, err
 	}
@@ -116,17 +111,17 @@ func New_AskPin(hsmPath string, slot uint) (*PKClient, error) {
 
 // Callers should use this when closing to clean-up properly and logout
 func (client *PKClient) Close() {
-	fmt.Printf("Closing called!\n")
 	client.HSM_Session.session.Logout()
 	client.HSM_Session.session.Close()
 	client.HSM_Session.module.Destroy()
 
 }
 
-// return the public key for the derive key that have previously found
+// return the public key for the deriving key that was previously found
 // this will return whole raw value, it's up the caller to check the length
 // this will likely be the full EC_POINT. See PublicKeyNoise()
 func (client *PKClient) PublicKeyRaw() ([]byte, error) {
+
 	key, err := client.HSM_Session.pubKeyObj.Value()
 	if err != nil {
 		return key, err
@@ -134,8 +129,14 @@ func (client *PKClient) PublicKeyRaw() ([]byte, error) {
 	return key, nil
 }
 
-// Returns a 32 byte length key which we attempt to get and convert correctly from the hsm
+// Returns a 32 byte length key from the hsm. attempts to convert to a usable WG key
 func (client *PKClient) PublicKeyNoise() (key [NoisePublicKeySize]byte, err error) {
+	if !client.HSM_Session.loggedIn {
+		err := fmt.Errorf("error: must login to hsm first")
+		var zkey [NoisePublicKeySize]byte // temp garbage key so we can return the error
+		return zkey, err
+	}
+
 	srcKey, err := client.HSM_Session.pubKeyObj.Value()
 
 	if err != nil || len(srcKey) < NoisePublicKeySize {
@@ -164,12 +165,17 @@ func (client *PKClient) PublicKeyB64() string {
 // derive a shared secret using the input public key against the private key that was found during setup
 // returns a fixed 32 byte array
 func (client *PKClient) DeriveNoise(peerPubKey [NoisePublicKeySize]byte) (secret [NoisePrivateKeySize]byte, err error) {
+	if !client.HSM_Session.loggedIn {
+		err := fmt.Errorf("error: must login to hsm first")
+		var zkey [NoisePublicKeySize]byte // temp garbage key so we can return the error
+		return zkey, err
+	}
 
 	var mech_mech uint = pkcs11.CKM_ECDH1_DERIVE
 
-	// before you call derive, you need to have an array of attributes which specify the type of
+	// before we call derive, we need to have an array of attributes which specify the type of
 	// key to be returned, in our case, it's the shared secret key, produced via deriving
-	// pulled template from OpenSC pkcs11-tool.c line 4038
+	// This template pulled from OpenSC pkcs11-tool.c line 4038
 	attrTemplate := []*pkcs11.Attribute{
 		pkcs11.NewAttribute(pkcs11.CKA_TOKEN, false),
 		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_SECRET_KEY),
@@ -182,7 +188,7 @@ func (client *PKClient) DeriveNoise(peerPubKey [NoisePublicKeySize]byte) (secret
 		pkcs11.NewAttribute(pkcs11.CKA_UNWRAP, true),
 	}
 
-	// setup the parameters which include the peer's public keey
+	// setup the parameters which include the peer's public key
 	ecdhParams := pkcs11.NewECDH1DeriveParams(pkcs11.CKD_NULL, nil, peerPubKey[:NoisePublicKeySize])
 
 	var mech *pkcs11.Mechanism = pkcs11.NewMechanism(mech_mech, ecdhParams)
@@ -190,7 +196,6 @@ func (client *PKClient) DeriveNoise(peerPubKey [NoisePublicKeySize]byte) (secret
 	// derive the secret key from the public key as input and the private key on the device
 	tmpKey, err := p11.PrivateKey(client.HSM_Session.privKeyObj).Derive(*mech, attrTemplate)
 	if err != nil {
-		fmt.Println("Error deriving key")
 		return secret, err
 	}
 
