@@ -21,11 +21,12 @@ After importing the go module, callers need to
 
 ### WireGuard-goHSM
 Instead of listing a PrivateKey in the [Interface] section of the config file, you can choose from two configuration options:
-	HSM = {pkcs11_library_path}, {slot_number}, {pin_number}
 
+	HSM = {pkcs11_library_path}, {slot_number}, {pin_number}
 	HSM = {pkcs11_library_path}, {slot_number}
 
 Example:
+
 	[Interface]
 	HSM = /usr/lib/pkcs11/opensc-pkcs11.so, 0, 123456
 	or
