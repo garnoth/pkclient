@@ -39,6 +39,7 @@ Omitting the pin number in the configuration file, will be prompt the user to en
 The process for getting a Curve25519 derivation key on the Nitrokey Start is as follows:
 
 -Use GPG in advanced mode to generate x25519 keys on the card
+
 	$ gpg --expert --full-gen-key 
 	(-select the option for ECC)
 	(-select 'Curve 25519' for the curve, probably option 1.)
