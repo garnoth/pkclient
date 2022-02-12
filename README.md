@@ -19,6 +19,12 @@ A fork for WireGuard-tools was also created so WireGuard-goHSM can load the HSM 
 
 After importing the go module, callers need to
 
+This project currently requires functions from the current branch of https://github.com/miekg/pkcs11
+Until a new release is made that includes the p11/Derive function, users will need to clone the repro and point pkclient at it using a replace command inside go.mod
+The current go.mod expects the folder 'pkcs11' to be up one level from the pkclient directory. 
+
+This project has only been tested using OpenSC's version of the pkcs11.so library on Linux and MacOS 
+
 ### WireGuard-goHSM
 Instead of listing a PrivateKey in the [Interface] section of the config file, you can choose from two configuration options:
 
