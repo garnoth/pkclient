@@ -11,9 +11,9 @@ This project has been successful and WireGuard sessions have been opened with no
 
 This client has only been tested so far with the Nitrokey Start, since this project began in mid-summer 2021, the Nitrokey Start was one of the only usb security keys that supported ECDH x25519
 
-Integrating this Golang-based client into the WireGuard VPN required some changes which have been published here: [Wireguard-goHSM](https://github.com/garnoth/wireguard-goHSM)
+Integrating this Golang-based client into the WireGuard VPN required some changes which have been published here: [Wireguard-HSM](https://github.com/garnoth/wireguard-HSM)
 
-A fork for WireGuard-tools was also created so WireGuard-goHSM can load the HSM configuration options from the config client. [WireGuard-tools](https://github.com/garnoth/wireguard-tools)
+A fork for WireGuard-tools was also created so WireGuard-HSM can load the HSM configuration options from the config client. [WireGuard-tools](https://github.com/garnoth/wireguard-tools)
 
 ## Configuration
 
@@ -25,7 +25,7 @@ The current go.mod expects the folder 'pkcs11' to be up one level from the pkcli
 
 This project has only been tested using OpenSC's version of the pkcs11.so library on Linux and MacOS 
 
-### WireGuard-goHSM
+### WireGuard-HSM
 Instead of saving a PrivateKey in the [Interface] section of the config file, the configuration options has been modified:
 
 	HSM = {pkcs11_library_path}, {slot_number}
@@ -66,7 +66,7 @@ Public keys for curve25519 are a little different, WireGuard represents them as 
 OpenSSL and the pkcs11-tool will save them in PEM format which has a short ASN.1 header before the actual key. WireGuard doesn't know what to do with the header if it gets it.
 
 ### Automated method
-Run WireGuard-goHSM and use the 'wg' tool to configure the interface with the HSM, it will dump the public key from the HSM to the command-line
+Run WireGuard-HSM and use the 'wg' tool to configure the interface with the HSM, it will dump the public key from the HSM to the command-line
 	 ./wireguard-go -f wg0
 	 /path/to/modified/wireguard-tools/wg setconf wg0 /path/to/wireguard_config_with_hsm.conf
 
