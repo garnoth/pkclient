@@ -26,20 +26,17 @@ The current go.mod expects the folder 'pkcs11' to be up one level from the pkcli
 This project has only been tested using OpenSC's version of the pkcs11.so library on Linux and MacOS 
 
 ### WireGuard-goHSM
-Instead of listing a PrivateKey in the [Interface] section of the config file, you can choose from two configuration options:
+Instead of saving a PrivateKey in the [Interface] section of the config file, the configuration options has been modified:
 
-	HSM = {pkcs11_library_path}, {slot_number}, {pin_number}
 	HSM = {pkcs11_library_path}, {slot_number}
 
 Example:
 
 	[Interface]
-	HSM = /usr/lib/pkcs11/opensc-pkcs11.so, 0, 123456
-	or
 	HSM = /usr/lib/pkcs11/opensc-pkcs11.so, 0
 
-Omitting the pin number in the configuration file, will be prompt the user to enter the password once WireGuard receives the configuration and loads the pkclient.
-*currently this prompt is only on the command-line and isn't an operating system dialog. That would be a nice addition
+A prompt will ask the user to enter the password once WireGuard-HSM reads the configuration and loads pkclient.
+*Currently* this prompt is only on the command-line and isn't an operating system dialog. That would be a nice addition
 
 ## Setting up the Nitrokey Start
 The process for getting a Curve25519 derivation key on the Nitrokey Start is as follows:
@@ -61,10 +58,11 @@ You should see a Public Key Object like this:
 
 Now the pkclient should be able to locate the private and public when asked by WireGuard.
 
-## Getting the Curve25519 Public key
-Extracting the public key from the HSM, in order to share it with a WireGuard peer is a little tricky.
+## Retriving the Curve25519 Public key
+WireGuard-HSM will print the public key found on the HSM on start-up but you can also load the pkclient module manually and call the function
+(it's work in progress to add a commandline option to dump this key)
 
-Public keys for curve25519 are a little funny, WireGuard represents them as pure 32 byte base64-encoded strings. 
+Public keys for curve25519 are a little different, WireGuard represents them as pure 32 byte base64-encoded strings. 
 OpenSSL and the pkcs11-tool will save them in PEM format which has a short ASN.1 header before the actual key. WireGuard doesn't know what to do with the header if it gets it.
 
 ### Automated method
